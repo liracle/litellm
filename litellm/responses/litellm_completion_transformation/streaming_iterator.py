@@ -973,6 +973,32 @@ class LiteLLMCompletionStreamingIterator(ResponsesAPIStreamingIterator):
     def _ensure_output_item_for_chunk(self, chunk: ModelResponseStream) -> None:
         # Change: Never return a value, just enqueue output item events
         if self.sent_output_item_added_event:
+            # The one-shot added flag may already be consumed by another item
+            # (tool call / role-only message). If reasoning content shows up
+            # afterwards, its output_item.added was never emitted and the
+            # reasoning deltas would reference an undeclared item.
+            if not self._reasoning_active and not self._reasoning_done_emitted and chunk.choices:
+                _delta: Final = chunk.choices[0].delta
+                if (getattr(_delta, "reasoning_content", None) or _delta_has_signed_thinking_block(_delta)) and not self.sent_message_item_added_event:
+                    self._reasoning_active = True
+                    if self._cached_reasoning_item_id is None:
+                        self._cached_reasoning_item_id = mint_reasoning_item_id()
+                    self._reasoning_item_id = self._cached_reasoning_item_id
+                    self._sequence_number += 1
+                    _reasoning_added: Final = OutputItemAddedEvent(
+                        type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED,
+                        output_index=self._reasoning_index(),
+                        item=BaseLiteLLMOpenAIResponseObject(
+                            **{
+                                "id": self._cached_reasoning_item_id,
+                                "type": "reasoning",
+                                "status": "in_progress",
+                                "summary": [{"type": "summary_text", "text": ""}],
+                            }
+                        ),
+                    )
+                    _reasoning_added.__dict__["sequence_number"] = self._sequence_number
+                    self._pending_response_events.append(_reasoning_added)
             return
         if not chunk.choices:
             return
@@ -1237,6 +1263,7 @@ class LiteLLMCompletionStreamingIterator(ResponsesAPIStreamingIterator):
                 type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA,
                 item_id=self._cached_reasoning_item_id,
                 output_index=self._reasoning_index(),
+                summary_index=0,
                 delta=reasoning_content,
             )
 
