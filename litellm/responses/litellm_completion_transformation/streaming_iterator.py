@@ -1024,7 +1024,10 @@ class LiteLLMCompletionStreamingIterator(ResponsesAPIStreamingIterator):
                         "id": self._cached_reasoning_item_id,
                         "type": "reasoning",
                         "status": "in_progress",
-                        "summary": None,
+                        # summary must be a non-empty sequence of summary_text
+                        # parts: strict consumers reject the whole frame when
+                        # the field serializes as null or is omitted.
+                        "summary": [{"type": "summary_text", "text": ""}],
                     }
                 ),
             )

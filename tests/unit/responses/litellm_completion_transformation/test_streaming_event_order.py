@@ -149,6 +149,32 @@ async def test_reasoning_then_text_emits_native_event_order():
     assert types.index(str(ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA)) > message_added_idx
 
 
+def _reasoning_added_items(events):
+    return [
+        event.item
+        for event in events
+        if _event_type(event) == str(ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED)
+        and _item_type(event) == "reasoning"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_item_added_carries_non_empty_summary():
+    """
+    reasoning output_item.added must carry a summary sequence: strict consumers
+    reject the frame when summary serializes as null or gets dropped.
+    """
+    events = await _collect_events(_reasoning_then_text_chunks())
+
+    items = _reasoning_added_items(events)
+    assert items, "reasoning item was never declared"
+    for item in items:
+        dumped = item.model_dump() if hasattr(item, "model_dump") else dict(item)
+        summary = dumped.get("summary")
+        assert isinstance(summary, list) and summary, f"summary must be a non-empty list, got {summary!r}"
+        assert summary[0].get("type") == "summary_text"
+
+
 @pytest.mark.asyncio
 async def test_reasoning_delta_carries_summary_index():
     """
